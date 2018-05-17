@@ -1,0 +1,113 @@
+---
+title: "Exercise Data Prediction with Machine Learning"
+author: "Jeff Patton"
+date: "5/12/2018"
+output:
+  html_document:
+    keep_md: yes
+  pdf_document: null
+---
+## Summary
+xxxxx
+
+```{r setup, cache=FALSE, echo=TRUE}
+library(knitr)
+output <- opts_knit$get("rmarkdown.pandoc.to")
+if (output=="html") opts_chunk$set(fig.width=10, fig.height=10)
+if (output=="docx") opts_chunk$set(fig.width=6,  fig.height=6)
+```
+
+## Data Processing
+
+```{r, echo=TRUE}
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(data.table)
+library(tidyr)
+
+if (!file.exists("./data")) {
+    dir.create("./data")
+}
+```
+
+Download, unzip, and read in the data.  This was done on Mac OS, so downloaded in 'wb' mode.
+
+```{r, echo=TRUE}
+fileurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(fileurl, destfile = "./data/pml-training.csv", mode = 'wb')
+fileurl2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(fileurl2, destfile = "./data/pml-testing.csv", mode = 'wb')
+
+pm1_train <- read.csv("./data/pml-training.csv", stringsAsFactors = FALSE)
+pm1_test <- read.csv("./data/pml-testing.csv", stringsAsFactors = FALSE)
+
+```
+
+Take a preliminary look at the data.
+
+```{r, echo=TRUE}
+pm1_train <- read.csv("./data/pml-training.csv", stringsAsFactors = TRUE)
+pm1_test <- read.csv("./data/pml-testing.csv", stringsAsFactors = TRUE)
+dt_pm1_train <- data.table(pm1_train)
+dt_pm1_test <- data.table(pm1_test)
+```
+
+It looks like there are lots of columns that we should be able to get rid of :
+"max", "min", "amplitude", "var", "avg", "stddev", "skewness", "kurtosis", "X", "user_name", "raw_timestamp", "cvtd_timestamp", "new_window", "num_window"
+
+```{r, echo=TRUE}
+## lets get rid of the easy, unique columns first
+drop_cols <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", 
+               "cvtd_timestamp", "new_window", "num_window")
+
+dt_pm1_train_small <- dt_pm1_train[, (drop_cols) := NULL]
+dt_pm1_train_small <- data.table(dt_pm1_train_small)
+
+dt_pm1_train_small <- dt_pm1_train_small %>% 
+         select(-starts_with("max")) %>% 
+         select(-starts_with("min")) %>% 
+         select(-starts_with("amplitude")) %>% 
+         select(-starts_with("var")) %>% 
+         select(-starts_with("avg")) %>% 
+         select(-starts_with("stddev")) %>% 
+         select(-starts_with("skewness")) %>%
+         select(-starts_with("kurtosis"))
+```
+
+```{r, echo=TRUE}
+str(dt_pm1_train_small)
+set.seed(42111)
+library(caret)
+library(lattice)
+library(rpart)
+```
+
+```{r, echo=TRUE}
+## referencing the github page: 
+## https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md
+
+##install.packages("parallel")
+##install.packages("doParallel")
+library(parallel)
+library(doParallel)
+
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           allowParallel = TRUE)
+
+rf_train <- train(classe ~ ., method = "rf", 
+                  data = dt_pm1_train_small, verbose = FALSE, trControl = fitControl)
+
+stopCluster(cluster)
+registerDoSEQ()
+
+rf_test <- predict(rf_train, dt_pm1_test)
+
+rf_train$resample
+confusionMatrix.train(rf_train)
+```
+
