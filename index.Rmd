@@ -1,30 +1,129 @@
 ---
-title: "Excercise Data Prediction with ML"
+title: "Exercise Data Prediction with Machine Learning"
 author: "Jeff Patton"
-date: "5/19/2018"
-output: html_document
+date: "5/12/2018"
+output:
+  html_document:
+    keep_md: yes
+  pdf_document: null
 ---
+## Synopsis
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+We built a random forest machine learning model to predict whether an arm weight lifting exercise was being performed correctly or incorrectly.  There were 5 different methods of performing the exercise, with Class A being correct - and Class B-E being incorrect.
+
+
+
+
+```{r setup, cache=FALSE, echo=TRUE}
+library(knitr)
+output <- opts_knit$get("rmarkdown.pandoc.to")
+if (output=="html") opts_chunk$set(fig.width=10, fig.height=10)
+if (output=="docx") opts_chunk$set(fig.width=6,  fig.height=6)
 ```
 
-## R Markdown
+## Data Processing
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+```{r, echo=TRUE}
+library(lubridate)
+library(ggplot2)
+library(data.table)
+library(tidyr)
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+if (!file.exists("./data")) {
+    dir.create("./data")
+}
 ```
 
-## Including Plots
+Download, unzip, and read in the data.  This was done on Mac OS, so downloaded in 'wb' mode.
 
-You can also embed plots, for example:
+```{r, echo=TRUE}
+fileurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(fileurl, destfile = "./data/pml-training.csv", mode = 'wb')
+fileurl2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(fileurl2, destfile = "./data/pml-testing.csv", mode = 'wb')
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+pm1_train <- read.csv("./data/pml-training.csv", stringsAsFactors = FALSE)
+pm1_test <- read.csv("./data/pml-testing.csv", stringsAsFactors = FALSE)
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+Take a preliminary look at the data.
+
+```{r, echo=TRUE}
+pm1_train <- read.csv("./data/pml-training.csv", stringsAsFactors = TRUE)
+pm1_test <- read.csv("./data/pml-testing.csv", stringsAsFactors = TRUE)
+dt_pm1_train <- data.table(pm1_train)
+dt_pm1_test <- data.table(pm1_test)
+```
+
+There are 160 predictors, we probably need to look to remove a few.  It looks like there are lots of columns that have "na" values.  When reviewing the background on this data, it sounds like we don't need skewness and kurtosis data. http://groupware.les.inf.puc-rio.br/har [ref 1]
+we should be able to get rid of columns:
+"max", "min", "amplitude", "var", "avg", "stddev", "skewness", "kurtosis", "X", "user_name", "raw_timestamp", "cvtd_timestamp", "new_window", "num_window"
+
+```{r, echo=TRUE}
+## lets get rid of the easy, unique columns first
+drop_cols <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", 
+               "cvtd_timestamp", "new_window", "num_window")
+
+dt_pm1_train_small <- dt_pm1_train[, (drop_cols) := NULL]
+dt_pm1_train_small <- data.table(dt_pm1_train_small)
+
+library(dplyr)
+dt_pm1_train_small <- dt_pm1_train_small %>% 
+         select(-starts_with("max")) %>% 
+         select(-starts_with("min")) %>% 
+         select(-starts_with("amplitude")) %>% 
+         select(-starts_with("var")) %>% 
+         select(-starts_with("avg")) %>% 
+         select(-starts_with("stddev")) %>% 
+         select(-starts_with("skewness")) %>%
+         select(-starts_with("kurtosis"))
+```
+
+Now we will start trying to build a model.
+
+```{r, echo=TRUE}
+str(dt_pm1_train_small)
+set.seed(42111)
+library(caret)
+library(lattice)
+library(rpart)
+```
+
+```{r, echo=TRUE}
+## referencing the github page on how to run random forest with parallel processing
+## https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md [ref 2]
+
+##install.packages("parallel")
+##install.packages("doParallel")
+library(parallel)
+library(doParallel)
+
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           allowParallel = TRUE)
+
+rf_train <- train(classe ~ ., method = "rf", 
+                  data = dt_pm1_train_small, verbose = FALSE, trControl = fitControl)
+
+stopCluster(cluster)
+registerDoSEQ()
+
+rf_test <- predict(rf_train, dt_pm1_test)
+
+rf_train$resample
+confusionMatrix.train(rf_train)
+```
+
+```{r, echo=TRUE}
+##plot(rf_train, main="Accuracy by Predictor Count")
+##varImpPlot(rf_train$finalModel, main="variable importance plot: Random Forest")
+```
+
+references
+1.  Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. Accessed on 5/19/18.
+http://groupware.les.inf.puc-rio.br/har
+2.  Greski, Leonard; Improving Performance of Random Forest in caret::train(). Accessed on 5/19/2018. https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md
