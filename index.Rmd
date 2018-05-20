@@ -9,26 +9,27 @@ output:
 ---
 ## Synopsis
 
-We built a random forest machine learning model to predict whether an arm weight lifting exercise was being performed correctly or incorrectly.  There were 5 different methods of performing the exercise, with Class A being correct - and Class B-E being incorrect.
+We built a random forest (rf) machine learning model to predict whether an arm weight lifting exercise was being performed correctly or incorrectly.  There were 5 different methods of performing the exercise, with Class A being correct - and Classes B-E being incorrect. ("classe" is the response in the dataset)
 
+The rf training model showed an accuracy of greater than 99% for the cross-validation on a 5-fold number of tries.  When this random forest model was applied to the test (hold-out) set we measured 100% accuracy in classifying the 5 different exercise methods.  Additional, linear discriminant analysis and a gradient boosted model were also constructed and compared.  
 
-
-
-```{r setup, cache=FALSE, echo=TRUE}
+```{r setup, cache=FALSE, echo=TRUE, message=FALSE, warning=FALSE}
 library(knitr)
 output <- opts_knit$get("rmarkdown.pandoc.to")
-if (output=="html") opts_chunk$set(fig.width=10, fig.height=10)
+if (output=="html") opts_chunk$set(fig.width=6, fig.height=6)
 if (output=="docx") opts_chunk$set(fig.width=6,  fig.height=6)
 ```
 
 ## Data Processing
 
-```{r, echo=TRUE}
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
 library(lubridate)
 library(ggplot2)
 library(data.table)
 library(tidyr)
+```
 
+```{r, echo=TRUE}
 if (!file.exists("./data")) {
     dir.create("./data")
 }
@@ -54,11 +55,17 @@ pm1_train <- read.csv("./data/pml-training.csv", stringsAsFactors = TRUE)
 pm1_test <- read.csv("./data/pml-testing.csv", stringsAsFactors = TRUE)
 dt_pm1_train <- data.table(pm1_train)
 dt_pm1_test <- data.table(pm1_test)
+str(dt_pm1_train)
+unique(dt_pm1_train$classe)
 ```
 
-There are 160 predictors, we probably need to look to remove a few.  It looks like there are lots of columns that have "na" values.  When reviewing the background on this data, it sounds like we don't need skewness and kurtosis data. http://groupware.les.inf.puc-rio.br/har [ref 1]
-we should be able to get rid of columns:
+There are 159 predictors, we probably need to look to remove a few.  It looks like there are lots of columns that have "na" values.  Additionally, when reviewing the background on this data, it sounds like we don't need skewness and kurtosis data. http://groupware.les.inf.puc-rio.br/har [ref 1]
+We should be able to get rid of columns:
 "max", "min", "amplitude", "var", "avg", "stddev", "skewness", "kurtosis", "X", "user_name", "raw_timestamp", "cvtd_timestamp", "new_window", "num_window"
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(dplyr)
+```
 
 ```{r, echo=TRUE}
 ## lets get rid of the easy, unique columns first
@@ -68,7 +75,6 @@ drop_cols <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2",
 dt_pm1_train_small <- dt_pm1_train[, (drop_cols) := NULL]
 dt_pm1_train_small <- data.table(dt_pm1_train_small)
 
-library(dplyr)
 dt_pm1_train_small <- dt_pm1_train_small %>% 
          select(-starts_with("max")) %>% 
          select(-starts_with("min")) %>% 
@@ -78,27 +84,34 @@ dt_pm1_train_small <- dt_pm1_train_small %>%
          select(-starts_with("stddev")) %>% 
          select(-starts_with("skewness")) %>%
          select(-starts_with("kurtosis"))
+
+dim(dt_pm1_train_small)
 ```
 
-Now we will start trying to build a model.
+Excellent, our training set is now a bit more manageable with just 52 predictors, from 159, before.  Now we will start trying to build a few different models on our training set.
 
-```{r, echo=TRUE}
-str(dt_pm1_train_small)
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
 set.seed(42111)
 library(caret)
 library(lattice)
 library(rpart)
+library(gbm)
+library(randomForest)
 ```
 
 ```{r, echo=TRUE}
-## referencing the github page on how to run random forest with parallel processing
+## We are referencing the github page on how to run random forest with parallel processing:
 ## https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md [ref 2]
+```
 
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
 ##install.packages("parallel")
 ##install.packages("doParallel")
 library(parallel)
 library(doParallel)
+```
 
+```{r, echo=TRUE}
 cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
 registerDoParallel(cluster)
 
@@ -106,24 +119,75 @@ fitControl <- trainControl(method = "cv",
                            number = 5,
                            allowParallel = TRUE)
 
+## In general, I would like to develop better ML skills for how I go from a 
+## large training set > model selection.
+## For this exercise, I picked 3 different model types and looked at their accuracy.
+
+## here is our linear discriminant analysis model
+lda_train <- train(classe ~., method = "lda", data = dt_pm1_train_small, 
+                   verbose = FALSE, trControl = fitControl)
+lda_train
+## 70% accuracy on the training set using a 5-fold cross-validation method.
+
+## here is our gradient boosted model
+gbm_train <- train(classe ~., method = "gbm", data = dt_pm1_train_small, 
+                   verbose = FALSE, trControl = fitControl)
+gbm_train
+## 96% accuracy on the training set using a 5-fold cross-validation and n.trees = 150.
+
+## here is our random forest model
 rf_train <- train(classe ~ ., method = "rf", 
                   data = dt_pm1_train_small, verbose = FALSE, trControl = fitControl)
+rf_train
+## 99.5% accuracy on the training set using a 5-fold cross validation and mtry = 27.  mtry = 2 was nearly as 
+## good as mtry = 27!
 
 stopCluster(cluster)
 registerDoSEQ()
 
+## Since random forest had the highest accuracy on our training set, we will use it to predict on our
+## test set (hold out) data.  
+## This class project is a little different than normal since the test set we were given had missing predictors.
+## This was done so that we could blind-test our prediction model and enter it in as a quiz.  
+## I really wanted to show a confusion matrix of the test data set!
 rf_test <- predict(rf_train, dt_pm1_test)
+rf_test
+## We used this output to enter into the quiz portion.  
+## 100% on the quiz! That means our rf model is quite good at discerning correct exercise "A" versus 
+## incorrect exercise "B-E" classes.  
+#  So now I know that rf_test is basically the "classe" response column from the test set.
 
-rf_train$resample
+pm1_test_w_classe <- data.frame(dt_pm1_test, "classe"=rf_test) 
+
+lda_test <- predict(lda_train, pm1_test_w_classe)
+gbm_test <- predict(gbm_train, pm1_test_w_classe)
+
+## rf_train$resample
 confusionMatrix.train(rf_train)
+confusionMatrix(rf_test, pm1_test_w_classe$classe)  
+## we expect this to be 100% accurate, and this is indeed true.
+
+confusionMatrix(lda_test, pm1_test_w_classe$classe)
+## the lda model had lower accuracy, and this is proven out in the test data.
+
+confusionMatrix(gbm_test, pm1_test_w_classe$classe)
+## interesting!  The gbm model had a slightly lower 96% accuracy for n.trees = 150 but 
+## matched the performance of the rf model and predicted with 100% accuracy on the test data.
 ```
 
 ```{r, echo=TRUE}
-##plot(rf_train, main="Accuracy by Predictor Count")
-##varImpPlot(rf_train$finalModel, main="variable importance plot: Random Forest")
+plot(rf_train, main="Accuracy by Predictor Count")
+varImpPlot(rf_train$finalModel, main="variable importance plot: Random Forest")
+## The "belt" and "pitch forearm" predictors are most important to the rf model.
 ```
 
-references
+## Conclusions
+
+We were able to build a random forest model with 100% accuracy to predict whether an arm weight lifting exercise was being performed correctly or incorrectly.  
+
+## References
+
 1.  Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. Accessed on 5/19/18.
 http://groupware.les.inf.puc-rio.br/har
+
 2.  Greski, Leonard; Improving Performance of Random Forest in caret::train(). Accessed on 5/19/2018. https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md
